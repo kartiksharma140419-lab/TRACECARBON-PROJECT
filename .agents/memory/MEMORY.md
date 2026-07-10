@@ -1,0 +1,1 @@
+- [Python FastAPI on Replit](python-fastapi-replit.md) — key environment quirks for running Python FastAPI in this pnpm monorepo workspace.
