@@ -47,3 +47,17 @@ Thumbs.db
 # Replit
 .cache/
 .local/
+
+# TraceCarbon — sensitive assets (never commit to git)
+earth_engine_key.json
+best.pt
+attached_assets/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.pythonlibs/
+.config/
+pyproject.toml
+uv.lock
