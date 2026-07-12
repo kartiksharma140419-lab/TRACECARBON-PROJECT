@@ -26,3 +26,4 @@ packages = ["freetype", "lcms2", "libimagequant", "libjpeg", "libtiff", "libwebp
 [userenv]
 
 [userenv.shared]
+GITHUB_TOKEN_HINT = "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_stored_in_git_remote"
