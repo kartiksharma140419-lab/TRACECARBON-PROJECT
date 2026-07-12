@@ -63,15 +63,15 @@ OPENWEATHERMAP_API_KEY: str = os.environ.get(
 )
 
 # International ARR (Afforestation, Reforestation, Revegetation) Carbon Metrics
-SEQUESTRATION_KG_PER_TREE_PER_YEAR: float = 22.0      # kg CO2 per mature tree per year
-BUFFER_POOL_DEDUCTION_RATE: float          = 0.15      # 15% permanence risk buffer
-NET_CREDIT_RETENTION_RATE: float           = 1.0 - BUFFER_POOL_DEDUCTION_RATE  # 0.85
+SEQUESTRATION_KG_PER_TREE_PER_YEAR: float = 22.0  # kg CO2 per mature tree per year
+BUFFER_POOL_DEDUCTION_RATE: float = 0.15  # 15% permanence risk buffer
+NET_CREDIT_RETENTION_RATE: float = 1.0 - BUFFER_POOL_DEDUCTION_RATE  # 0.85
 
 # Spatial fraud prevention threshold
 EXIF_COORDINATE_MAX_VARIANCE_METERS: float = 100.0
 
 # Upload constraints
-MAX_IMAGE_BYTES: int = 50 * 1024 * 1024          # 50 MB hard cap
+MAX_IMAGE_BYTES: int = 50 * 1024 * 1024  # 50 MB hard cap
 ALLOWED_MIME_PREFIXES: Tuple = ("image/jpeg", "image/png", "image/tiff", "image/webp")
 
 # EVM wallet address: 0x followed by exactly 40 hex characters
@@ -79,7 +79,7 @@ _EVM_WALLET_RE = re.compile(r"^0x[0-9a-fA-F]{40}$")
 
 # Asset file paths — expected at project root
 YOLO_MODEL_PATH: str = os.environ.get("YOLO_MODEL_PATH", "best.pt")
-EE_KEY_PATH: str     = os.environ.get("EE_KEY_PATH", "earth_engine_key.json")
+EE_KEY_PATH: str = os.environ.get("EE_KEY_PATH", "earth_engine_key.json")
 
 # Sentinel-2 surface reflectance collection identifier
 EE_SENTINEL2_COLLECTION: str = "COPERNICUS/S2_SR_HARMONIZED"
@@ -89,15 +89,16 @@ EE_SENTINEL2_COLLECTION: str = "COPERNICUS/S2_SR_HARMONIZED"
 # SUBSYSTEM STATE  (lazy initialization — server is always startable)
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 class SubsystemState:
     """Tracks readiness of heavyweight external subsystems."""
 
-    yolo_model: Any          = None   # YOLO instance or None
-    yolo_ready: bool         = False
-    yolo_error: str          = ""
+    yolo_model: Any = None  # YOLO instance or None
+    yolo_ready: bool = False
+    yolo_error: str = ""
 
-    ee_ready: bool           = False
-    ee_error: str            = ""
+    ee_ready: bool = False
+    ee_error: str = ""
 
     def ready(self) -> bool:
         return self.yolo_ready and self.ee_ready
@@ -129,6 +130,7 @@ _state = SubsystemState()
 # LIFESPAN — attempt subsystem initialization at startup (non-fatal)
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
@@ -150,9 +152,12 @@ async def lifespan(app: FastAPI):
     else:
         try:
             from ultralytics import YOLO
+
             _state.yolo_model = YOLO(YOLO_MODEL_PATH)
             _state.yolo_ready = True
-            logger.info("[YOLO] ✓ Custom tree crown model loaded from '%s'", YOLO_MODEL_PATH)
+            logger.info(
+                "[YOLO] ✓ Custom tree crown model loaded from '%s'", YOLO_MODEL_PATH
+            )
         except Exception as exc:
             _state.yolo_error = str(exc)
             logger.error("[YOLO] ✗ Failed to load model — %s", exc)
@@ -167,8 +172,9 @@ async def lifespan(app: FastAPI):
     else:
         try:
             import ee
+
             ee_credentials = ee.ServiceAccountCredentials(
-                email=None,           # parsed automatically from the JSON key
+                email=None,  # parsed automatically from the JSON key
                 key_file=EE_KEY_PATH,
             )
             ee.Initialize(credentials=ee_credentials, project=None)
@@ -182,7 +188,9 @@ async def lifespan(app: FastAPI):
 
     # ── Startup summary ───────────────────────────────────────────────────────
     if _state.ready():
-        logger.info("[STARTUP] ✓ All subsystems READY — dMRV pipeline fully operational.")
+        logger.info(
+            "[STARTUP] ✓ All subsystems READY — dMRV pipeline fully operational."
+        )
     else:
         logger.warning(
             "[STARTUP] ⚠ One or more subsystems UNAVAILABLE. "
@@ -220,7 +228,7 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=False,   # must be False when allow_origins=["*"]
+    allow_credentials=False,  # must be False when allow_origins=["*"]
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -229,6 +237,7 @@ app.add_middleware(
 # ─────────────────────────────────────────────────────────────────────────────
 # UTILITY HELPERS
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 def _dms_component_to_float(component: Any) -> float:
     """
@@ -285,13 +294,13 @@ def _haversine_distance_meters(
     Calculate the great-circle distance (metres) between two WGS-84 coordinates
     using the Haversine formula.
     """
-    R  = 6_371_000  # Earth mean radius in metres
+    R = 6_371_000  # Earth mean radius in metres
     φ1 = math.radians(lat1)
     φ2 = math.radians(lat2)
     Δφ = math.radians(lat2 - lat1)
     Δλ = math.radians(lon2 - lon1)
-    a  = math.sin(Δφ / 2) ** 2 + math.cos(φ1) * math.cos(φ2) * math.sin(Δλ / 2) ** 2
-    c  = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+    a = math.sin(Δφ / 2) ** 2 + math.cos(φ1) * math.cos(φ2) * math.sin(Δλ / 2) ** 2
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
     return R * c
 
 
@@ -308,8 +317,7 @@ def _extract_exif_gps(image: Image.Image) -> Optional[Dict[str, Any]]:
             return None
 
         exif_data: Dict[str, Any] = {
-            TAGS.get(tag_id, tag_id): value
-            for tag_id, value in raw_exif.items()
+            TAGS.get(tag_id, tag_id): value for tag_id, value in raw_exif.items()
         }
 
         gps_info_raw: Optional[Dict] = exif_data.get("GPSInfo")
@@ -317,13 +325,14 @@ def _extract_exif_gps(image: Image.Image) -> Optional[Dict[str, Any]]:
             return None
 
         gps_data: Dict[str, Any] = {
-            GPSTAGS.get(key, key): value
-            for key, value in gps_info_raw.items()
+            GPSTAGS.get(key, key): value for key, value in gps_info_raw.items()
         }
 
         required_keys = {
-            "GPSLatitude", "GPSLatitudeRef",
-            "GPSLongitude", "GPSLongitudeRef",
+            "GPSLatitude",
+            "GPSLatitudeRef",
+            "GPSLongitude",
+            "GPSLongitudeRef",
         }
         if not required_keys.issubset(gps_data.keys()):
             logger.warning(
@@ -332,11 +341,18 @@ def _extract_exif_gps(image: Image.Image) -> Optional[Dict[str, Any]]:
             )
             return None
 
-        lat = _dms_to_decimal(gps_data["GPSLatitude"],  gps_data["GPSLatitudeRef"])
+        lat = _dms_to_decimal(gps_data["GPSLatitude"], gps_data["GPSLatitudeRef"])
         lon = _dms_to_decimal(gps_data["GPSLongitude"], gps_data["GPSLongitudeRef"])
         return {"latitude": lat, "longitude": lon}
 
-    except (AttributeError, KeyError, TypeError, ValueError, struct.error, ZeroDivisionError) as exc:
+    except (
+        AttributeError,
+        KeyError,
+        TypeError,
+        ValueError,
+        struct.error,
+        ZeroDivisionError,
+    ) as exc:
         logger.warning("[STEP-1] EXIF parse error — %s", exc)
         return None
 
@@ -344,6 +360,7 @@ def _extract_exif_gps(image: Image.Image) -> Optional[Dict[str, Any]]:
 # ─────────────────────────────────────────────────────────────────────────────
 # PIPELINE STEPS
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 async def step1_exif_fraud_check(
     image: Image.Image,
@@ -365,8 +382,9 @@ async def step1_exif_fraud_check(
     exceeds EXIF_COORDINATE_MAX_VARIANCE_METERS (active fraud signal).
     """
     logger.info(
-        "[STEP-1] Initiating EXIF GPS fraud prevention check "
-        "(submitted: %.6f, %.6f)", submitted_lat, submitted_lon,
+        "[STEP-1] Initiating EXIF GPS fraud prevention check (submitted: %.6f, %.6f)",
+        submitted_lat,
+        submitted_lon,
     )
 
     gps_coords = _extract_exif_gps(image)
@@ -379,22 +397,26 @@ async def step1_exif_fraud_check(
         return False
 
     try:
-        exif_lat   = gps_coords["latitude"]
-        exif_lon   = gps_coords["longitude"]
+        exif_lat = gps_coords["latitude"]
+        exif_lon = gps_coords["longitude"]
         distance_m = _haversine_distance_meters(
             submitted_lat, submitted_lon, exif_lat, exif_lon
         )
     except Exception as exc:
         logger.warning(
             "⚠️ [TEST MODE] EXIF Metadata missing or invalid. "
-            "Bypassing location check for development testing. (detail: %s)", exc,
+            "Bypassing location check for development testing. (detail: %s)",
+            exc,
         )
         return False
 
     logger.info(
         "[STEP-1] EXIF GPS decoded — lat=%.6f, lon=%.6f | "
         "Haversine variance=%.2f m (threshold=%d m)",
-        exif_lat, exif_lon, distance_m, EXIF_COORDINATE_MAX_VARIANCE_METERS,
+        exif_lat,
+        exif_lon,
+        distance_m,
+        EXIF_COORDINATE_MAX_VARIANCE_METERS,
     )
 
     if distance_m > EXIF_COORDINATE_MAX_VARIANCE_METERS:
@@ -433,7 +455,9 @@ async def step2_weather_cross_verify(lat: float, lon: float) -> Dict[str, Any]:
         Dict with temperature_kelvin, weather_description, timestamp_utc.
     """
     logger.info(
-        "[STEP-2] Fetching real-time weather context for (%.6f, %.6f) …", lat, lon,
+        "[STEP-2] Fetching real-time weather context for (%.6f, %.6f) …",
+        lat,
+        lon,
     )
 
     url = (
@@ -453,20 +477,22 @@ async def step2_weather_cross_verify(lat: float, lon: float) -> Dict[str, Any]:
             resp.raise_for_status()
             data = resp.json()
     except httpx.HTTPStatusError as exc:
-        logger.error("[STEP-2] OpenWeatherMap HTTP %d — %s", exc.response.status_code, exc)
+        logger.error(
+            "[STEP-2] OpenWeatherMap HTTP %d — %s", exc.response.status_code, exc
+        )
         logger.warning("[STEP-2] Proceeding with fallback weather context.")
         return fallback
     except httpx.RequestError as exc:
         logger.error("[STEP-2] Weather API network error — %s", exc)
         return fallback
 
-    temp_k: float    = data.get("main", {}).get("temp", 0.0)
-    weather_list     = data.get("weather", [{}])
+    temp_k: float = data.get("main", {}).get("temp", 0.0)
+    weather_list = data.get("weather", [{}])
     weather_desc: str = (
         weather_list[0].get("description", "unknown") if weather_list else "unknown"
     )
-    obs_ts: int      = data.get("dt", 0)
-    obs_utc: str     = (
+    obs_ts: int = data.get("dt", 0)
+    obs_utc: str = (
         datetime.fromtimestamp(obs_ts, tz=timezone.utc).isoformat()
         if obs_ts
         else datetime.now(timezone.utc).isoformat()
@@ -475,7 +501,10 @@ async def step2_weather_cross_verify(lat: float, lon: float) -> Dict[str, Any]:
     logger.info(
         "[STEP-2] ✓ Weather context captured — "
         "temp=%.1f K (%.1f °C), condition='%s', obs_time=%s",
-        temp_k, temp_k - 273.15, weather_desc, obs_utc,
+        temp_k,
+        temp_k - 273.15,
+        weather_desc,
+        obs_utc,
     )
 
     return {
@@ -502,7 +531,9 @@ async def step3_satellite_ndvi_delta(
         Tuple of (ndvi_historical, ndvi_current, approval_flag_string).
     """
     logger.info(
-        "[STEP-3] Querying Google Earth Engine NDVI delta for (%.6f, %.6f) …", lat, lon,
+        "[STEP-3] Querying Google Earth Engine NDVI delta for (%.6f, %.6f) …",
+        lat,
+        lon,
     )
 
     def _gee_compute() -> Tuple[float, float]:
@@ -510,19 +541,22 @@ async def step3_satellite_ndvi_delta(
         import ee  # earthengine-api (already initialized in lifespan)
 
         # 1 km² bounding box around the submitted coordinate
-        point  = ee.Geometry.Point([lon, lat])
-        roi    = point.buffer(500).bounds()
+        point = ee.Geometry.Point([lon, lat])
+        roi = point.buffer(500).bounds()
 
         # Date windows
         now = datetime.now(timezone.utc)
-        hist_end   = (now - timedelta(days=730)).strftime("%Y-%m-%d")
+        hist_end = (now - timedelta(days=730)).strftime("%Y-%m-%d")
         hist_start = (now - timedelta(days=760)).strftime("%Y-%m-%d")
-        curr_end   = now.strftime("%Y-%m-%d")
+        curr_end = now.strftime("%Y-%m-%d")
         curr_start = (now - timedelta(days=60)).strftime("%Y-%m-%d")
 
         logger.info(
             "[STEP-3][GEE] Historical: %s → %s | Current: %s → %s",
-            hist_start, hist_end, curr_start, curr_end,
+            hist_start,
+            hist_end,
+            curr_start,
+            curr_end,
         )
 
         def _ndvi_mean(start_date: str, end_date: str) -> float:
@@ -532,34 +566,36 @@ async def step3_satellite_ndvi_delta(
                 .filterBounds(roi)
                 .filterDate(start_date, end_date)
                 .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", 30))
-                .select(["B8", "B4"])     # NIR, Red — NDVI = (B8−B4)/(B8+B4)
+                .select(["B8", "B4"])  # NIR, Red — NDVI = (B8−B4)/(B8+B4)
             )
 
             # Widen window if collection is empty (sparse coverage areas)
             if col.size().getInfo() == 0:
                 logger.warning(
                     "[STEP-3][GEE] No imagery in primary window (%s→%s). "
-                    "Widening to ±90 days.", start_date, end_date,
+                    "Widening to ±90 days.",
+                    start_date,
+                    end_date,
                 )
                 dt_start = datetime.strptime(start_date, "%Y-%m-%d")
-                dt_end   = datetime.strptime(end_date,   "%Y-%m-%d")
+                dt_end = datetime.strptime(end_date, "%Y-%m-%d")
                 col = (
                     ee.ImageCollection(EE_SENTINEL2_COLLECTION)
                     .filterBounds(roi)
                     .filterDate(
                         (dt_start - timedelta(days=90)).strftime("%Y-%m-%d"),
-                        (dt_end   + timedelta(days=90)).strftime("%Y-%m-%d"),
+                        (dt_end + timedelta(days=90)).strftime("%Y-%m-%d"),
                     )
                     .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", 50))
                     .select(["B8", "B4"])
                 )
 
-            mosaic     = col.mosaic()
+            mosaic = col.mosaic()
             ndvi_image = mosaic.normalizedDifference(["B8", "B4"]).rename("ndvi")
-            stats      = ndvi_image.reduceRegion(
+            stats = ndvi_image.reduceRegion(
                 reducer=ee.Reducer.mean(),
                 geometry=roi,
-                scale=10,              # Sentinel-2 native 10 m resolution
+                scale=10,  # Sentinel-2 native 10 m resolution
                 maxPixels=1_000_000,
             )
             val = stats.get("ndvi").getInfo()
@@ -573,19 +609,23 @@ async def step3_satellite_ndvi_delta(
     delta = ndvi_curr - ndvi_hist
     logger.info(
         "[STEP-3] NDVI results — historical=%.4f | current=%.4f | delta=%.4f",
-        ndvi_hist, ndvi_curr, delta,
+        ndvi_hist,
+        ndvi_curr,
+        delta,
     )
 
     if ndvi_curr >= ndvi_hist:
         flag = "POSITIVE_GROWTH_CONFIRMED"
         logger.info(
             "[STEP-3] ✓ Satellite NDVI check PASSED — "
-            "stable/positive greenness trajectory (Δ=%.4f).", delta,
+            "stable/positive greenness trajectory (Δ=%.4f).",
+            delta,
         )
     else:
         flag = "VEGETATION_DECLINE_DETECTED"
         logger.warning(
-            "[STEP-3] ⚠ NDVI decline detected (Δ=%.4f). Flagged for manual review.", delta,
+            "[STEP-3] ⚠ NDVI decline detected (Δ=%.4f). Flagged for manual review.",
+            delta,
         )
 
     return ndvi_hist, ndvi_curr, flag
@@ -637,21 +677,24 @@ async def step4_yolo_carbon_accounting(
             pass
 
     # ── Carbon Accounting Math ───────────────────────────────────────────────
-    gross_kg: float       = tree_count * SEQUESTRATION_KG_PER_TREE_PER_YEAR
-    gross_tons: float     = gross_kg / 1000.0
+    gross_kg: float = tree_count * SEQUESTRATION_KG_PER_TREE_PER_YEAR
+    gross_tons: float = gross_kg / 1000.0
     buffer_deduction: float = gross_tons * BUFFER_POOL_DEDUCTION_RATE
-    net_credits: float    = gross_tons * NET_CREDIT_RETENTION_RATE
+    net_credits: float = gross_tons * NET_CREDIT_RETENTION_RATE
 
     logger.info(
         "[STEP-4] ✓ Inference complete — trees=%d | gross=%.4f t CO2/yr | "
         "net_credits=%.4f t | buffer_pool=%.4f t",
-        tree_count, gross_tons, net_credits, buffer_deduction,
+        tree_count,
+        gross_tons,
+        net_credits,
+        buffer_deduction,
     )
 
     return (
         tree_count,
-        round(gross_tons,     6),
-        round(net_credits,    6),
+        round(gross_tons, 6),
+        round(net_credits, 6),
         round(buffer_deduction, 6),
     )
 
@@ -659,6 +702,7 @@ async def step4_yolo_carbon_accounting(
 # ─────────────────────────────────────────────────────────────────────────────
 # PRIMARY dMRV AUDIT ENDPOINT
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 @app.post(
     "/api/verify-audit",
@@ -672,10 +716,18 @@ async def step4_yolo_carbon_accounting(
     tags=["dMRV Pipeline"],
 )
 async def verify_audit(
-    latitude:       float      = Form(..., description="Decimal latitude of the carbon asset site (WGS-84)"),
-    longitude:      float      = Form(..., description="Decimal longitude of the carbon asset site (WGS-84)"),
-    wallet_address: str        = Form(..., description="Target EVM-compatible wallet address for credit minting"),
-    image:          UploadFile = File(..., description="Aerial survey image (JPEG/PNG with GPS EXIF metadata)"),
+    latitude: float = Form(
+        ..., description="Decimal latitude of the carbon asset site (WGS-84)"
+    ),
+    longitude: float = Form(
+        ..., description="Decimal longitude of the carbon asset site (WGS-84)"
+    ),
+    wallet_address: str = Form(
+        ..., description="Target EVM-compatible wallet address for credit minting"
+    ),
+    image: UploadFile = File(
+        ..., description="Aerial survey image (JPEG/PNG with GPS EXIF metadata)"
+    ),
 ) -> JSONResponse:
     """
     Execute the full 4-step dMRV verification pipeline and return an immutable
@@ -714,7 +766,11 @@ async def verify_audit(
         "  Wallet       : %s\n"
         "  Image file   : %s\n"
         "════════════════════════════════════════════════════════════",
-        audit_id, latitude, longitude, wallet_address, image.filename,
+        audit_id,
+        latitude,
+        longitude,
+        wallet_address,
+        image.filename,
     )
 
     # ── Input validation ─────────────────────────────────────────────────────
@@ -743,7 +799,9 @@ async def verify_audit(
 
     # ── MIME type guard (check Content-Type header from the upload) ──────────
     content_type = (image.content_type or "").lower().split(";")[0].strip()
-    if content_type and not any(content_type.startswith(p) for p in ALLOWED_MIME_PREFIXES):
+    if content_type and not any(
+        content_type.startswith(p) for p in ALLOWED_MIME_PREFIXES
+    ):
         raise HTTPException(
             status_code=415,
             detail=(
@@ -784,71 +842,79 @@ async def verify_audit(
     # STEP 2 — Real-time Weather Cross-Verification
     # ────────────────────────────────────────────────────────────────────────
     logger.info("[AUDIT %s] ── STEP 2: Weather Cross-Verification ──", audit_id)
-    weather_ctx  = await step2_weather_cross_verify(latitude, longitude)
+    weather_ctx = await step2_weather_cross_verify(latitude, longitude)
     weather_desc: str = weather_ctx["weather_description"]
 
     # ────────────────────────────────────────────────────────────────────────
     # STEP 3 — Satellite NDVI Delta (GEE)
     # ────────────────────────────────────────────────────────────────────────
     logger.info("[AUDIT %s] ── STEP 3: Satellite NDVI Delta Analysis ──", audit_id)
-    ndvi_hist, ndvi_curr, ndvi_flag = await step3_satellite_ndvi_delta(latitude, longitude)
+    ndvi_hist, ndvi_curr, ndvi_flag = await step3_satellite_ndvi_delta(
+        latitude, longitude
+    )
 
     # ────────────────────────────────────────────────────────────────────────
     # STEP 4 — YOLOv8 Inference & Carbon Accounting
     # ────────────────────────────────────────────────────────────────────────
     logger.info("[AUDIT %s] ── STEP 4: YOLO Inference & Carbon Accounting ──", audit_id)
-    tree_count, gross_tons, net_credits, buffer_deduction = \
-        await step4_yolo_carbon_accounting(image_bytes)
+    (
+        tree_count,
+        gross_tons,
+        net_credits,
+        buffer_deduction,
+    ) = await step4_yolo_carbon_accounting(image_bytes)
 
     # ────────────────────────────────────────────────────────────────────────
     # POLICY GATE — NDVI verification outcome drives final status
     # ────────────────────────────────────────────────────────────────────────
-    ndvi_approved = (ndvi_flag == "POSITIVE_GROWTH_CONFIRMED")
+    ndvi_approved = ndvi_flag == "POSITIVE_GROWTH_CONFIRMED"
 
     # Determine final audit disposition
     if ndvi_approved:
-        final_status     = "APPROVED"
-        action_pending   = "MINT_ERC20"
-        abi_ready        = True
+        final_status = "APPROVED"
+        action_pending = "MINT_ERC20"
+        abi_ready = True
         http_status_code = 200
         logger.info(
             "[AUDIT %s] ✓ ALL 4 STEPS CLEARED — NDVI positive. "
-            "Composing Polygon Amoy mint payload.", audit_id,
+            "Composing Polygon Amoy mint payload.",
+            audit_id,
         )
     else:
         # Vegetation decline detected: halt minting, flag for human review
-        final_status     = "FLAGGED_FOR_REVIEW"
-        action_pending   = "MANUAL_REVIEW_REQUIRED"
-        abi_ready        = False
-        http_status_code = 200   # still 200 — the audit ran; outcome is in the body
+        final_status = "FLAGGED_FOR_REVIEW"
+        action_pending = "MANUAL_REVIEW_REQUIRED"
+        abi_ready = False
+        http_status_code = 200  # still 200 — the audit ran; outcome is in the body
         logger.warning(
             "[AUDIT %s] ⚠ NDVI decline flagged — status=FLAGGED_FOR_REVIEW. "
-            "Carbon credits withheld pending manual verification.", audit_id,
+            "Carbon credits withheld pending manual verification.",
+            audit_id,
         )
 
     # ────────────────────────────────────────────────────────────────────────
     # IMMUTABLE WEB3 RESPONSE PAYLOAD
     # ────────────────────────────────────────────────────────────────────────
     payload: Dict[str, Any] = {
-        "status":                      final_status,
-        "audit_id":                    audit_id,
-        "wallet_targeted":             wallet_clean,
-        "trees_detected":              tree_count,
-        "gross_annual_co2_tons":       gross_tons,
+        "status": final_status,
+        "audit_id": audit_id,
+        "wallet_targeted": wallet_clean,
+        "trees_detected": tree_count,
+        "gross_annual_co2_tons": gross_tons,
         "net_carbon_credits_mintable": net_credits if ndvi_approved else 0.0,
-        "buffer_pool_retained":        buffer_deduction,
+        "buffer_pool_retained": buffer_deduction,
         "dMRV_telemetry": {
-            "exif_match":                 exif_verified,
-            "weather_condition":          weather_desc,
+            "exif_match": exif_verified,
+            "weather_condition": weather_desc,
             "weather_temperature_kelvin": weather_ctx.get("temperature_kelvin"),
-            "weather_observation_utc":    weather_ctx.get("timestamp_utc"),
-            "satellite_ndvi_historical":  round(ndvi_hist, 4),
-            "satellite_ndvi_current":     round(ndvi_curr, 4),
-            "satellite_ndvi_delta":       ndvi_flag,
+            "weather_observation_utc": weather_ctx.get("timestamp_utc"),
+            "satellite_ndvi_historical": round(ndvi_hist, 4),
+            "satellite_ndvi_current": round(ndvi_curr, 4),
+            "satellite_ndvi_delta": ndvi_flag,
         },
         "blockchain_queue": {
-            "network":            "Polygon Amoy",
-            "action_pending":     action_pending,
+            "network": "Polygon Amoy",
+            "action_pending": action_pending,
             "contract_abi_ready": abi_ready,
         },
     }
@@ -856,7 +922,11 @@ async def verify_audit(
     logger.info(
         "[AUDIT %s] ══ AUDIT COMPLETE ══ status=%s | "
         "trees=%d | gross=%.4f tCO2 | net=%.4f credits",
-        audit_id, final_status, tree_count, gross_tons, net_credits,
+        audit_id,
+        final_status,
+        tree_count,
+        gross_tons,
+        net_credits,
     )
 
     return JSONResponse(content=payload, status_code=http_status_code)
@@ -866,19 +936,20 @@ async def verify_audit(
 # HEALTH CHECK
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 @app.get("/api/healthz", summary="Health Check", tags=["System"])
 async def health_check() -> Dict[str, Any]:
     """Returns server liveness and subsystem readiness status."""
     return {
-        "status":    "healthy",
-        "service":   "TraceCarbon dMRV Registry API",
-        "version":   "1.0.0",
+        "status": "healthy",
+        "service": "TraceCarbon dMRV Registry API",
+        "version": "1.0.0",
         "pipeline_ready": _state.ready(),
         "subsystems": _state.diagnostic(),
         "carbon_metrics": {
             "sequestration_kg_per_tree_yr": SEQUESTRATION_KG_PER_TREE_PER_YEAR,
-            "buffer_pool_deduction_pct":    BUFFER_POOL_DEDUCTION_RATE * 100,
-            "net_retention_pct":            NET_CREDIT_RETENTION_RATE * 100,
+            "buffer_pool_deduction_pct": BUFFER_POOL_DEDUCTION_RATE * 100,
+            "net_retention_pct": NET_CREDIT_RETENTION_RATE * 100,
         },
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
     }
@@ -889,14 +960,15 @@ async def api_root() -> Dict[str, str]:
     return {
         "service": "TraceCarbon dMRV Registry API",
         "version": "1.0.0",
-        "docs":    "/api/docs",
-        "health":  "/api/healthz",
+        "docs": "/api/docs",
+        "health": "/api/healthz",
     }
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # GLOBAL EXCEPTION HANDLER
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception) -> JSONResponse:
@@ -908,7 +980,7 @@ async def global_exception_handler(request: Request, exc: Exception) -> JSONResp
         status_code=500,
         content={
             "status": "ERROR",
-            "error":  "Internal server error. The incident has been logged.",
+            "error": "Internal server error. The incident has been logged.",
         },
     )
 
