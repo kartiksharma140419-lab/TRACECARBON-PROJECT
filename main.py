@@ -11,8 +11,9 @@ Pipeline:
   Step 2 → Real-time OpenWeatherMap Cross-Verification
   Step 3 → Google Earth Engine Satellite NDVI Delta Analysis
   Step 4 → YOLOv8 Computer Vision Tree Detection & Carbon Accounting
+  Step 5 → On-chain ERC-20 Carbon Credit Minting (Arc Testnet)
 
-Response: Immutable Web3 JSON payload targeting Polygon Amoy.
+Response: Immutable Web3 JSON payload with on-chain transaction hash.
 
 STARTUP NOTE:
   The server starts immediately in all cases. If 'best.pt' or 'earth_engine_key.json'
@@ -40,6 +41,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from PIL import Image
 from PIL.ExifTags import TAGS, GPSTAGS
+
+# Web3 — Arc Testnet on-chain minting
+# NOTE: web3 v7 renamed geth_poa_middleware → ExtraDataToPOAMiddleware
+from web3 import Web3
+from web3.middleware import ExtraDataToPOAMiddleware
 
 # ─────────────────────────────────────────────────────────────────────────────
 # LOGGING CONFIGURATION
@@ -84,6 +90,63 @@ EE_KEY_PATH: str = os.environ.get("EE_KEY_PATH", "earth_engine_key.json")
 # Sentinel-2 surface reflectance collection identifier
 EE_SENTINEL2_COLLECTION: str = "COPERNICUS/S2_SR_HARMONIZED"
 
+# ─────────────────────────────────────────────────────────────────────────────
+# WEB3 / ARC TESTNET CONFIGURATION
+# ─────────────────────────────────────────────────────────────────────────────
+
+ARC_TESTNET_RPC_URL: str = "https://rpc.testnet.arc.network"
+
+# Private key: prefer PRIVATE_KEY_METAMASK, fall back to PRIVATE_KEY
+_RAW_PRIVATE_KEY: str = (
+    os.environ.get("PRIVATE_KEY_METAMASK")
+    or os.environ.get("PRIVATE_KEY")
+    or ""
+)
+
+TRACK_CARBON_CONTRACT_ADDRESS: str = (
+    os.environ.get("TRACK_CARBON_CONTRACT_ADDRESS") or ""
+)
+
+# mintCarbonCredits(address, uint256, uint256, uint256, string) → uint256
+CARBON_CONTRACT_ABI = [
+    {
+        "inputs": [
+            {"internalType": "address", "name": "beneficiary",        "type": "address"},
+            {"internalType": "uint256", "name": "tokenAmountDecimal", "type": "uint256"},
+            {"internalType": "uint256", "name": "trees",              "type": "uint256"},
+            {"internalType": "uint256", "name": "co2Tons",            "type": "uint256"},
+            {"internalType": "string",  "name": "geoCoords",          "type": "string"},
+        ],
+        "name": "mintCarbonCredits",
+        "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}],
+        "stateMutability": "nonpayable",
+        "type": "function",
+    }
+]
+
+# Initialise Web3 provider — injecting PoA middleware for Arc layer-1 consensus
+w3 = Web3(Web3.HTTPProvider(ARC_TESTNET_RPC_URL))
+w3.middleware_onion.inject(ExtraDataToPOAMiddleware, layer=0)
+
+# Deployer account (signs mint transactions)
+_deployer_account = None
+if _RAW_PRIVATE_KEY:
+    try:
+        _deployer_account = w3.eth.account.from_key(_RAW_PRIVATE_KEY)
+    except Exception as _pk_err:
+        logger.warning("[WEB3] ⚠ Could not parse private key — %s", _pk_err)
+
+# Contract instance (address resolved at startup)
+_carbon_contract = None
+if TRACK_CARBON_CONTRACT_ADDRESS:
+    try:
+        _carbon_contract = w3.eth.contract(
+            address=Web3.to_checksum_address(TRACK_CARBON_CONTRACT_ADDRESS),
+            abi=CARBON_CONTRACT_ABI,
+        )
+    except Exception as _contract_err:
+        logger.warning("[WEB3] ⚠ Contract init failed — %s", _contract_err)
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # SUBSYSTEM STATE  (lazy initialization — server is always startable)
@@ -99,6 +162,9 @@ class SubsystemState:
 
     ee_ready: bool = False
     ee_error: str = ""
+
+    web3_ready: bool = False
+    web3_error: str = ""
 
     def ready(self) -> bool:
         return self.yolo_ready and self.ee_ready
@@ -119,6 +185,13 @@ class SubsystemState:
                 "status": "configured"
                 if OPENWEATHERMAP_API_KEY != "MOCK_OWM_KEY_REPLACE_IN_PRODUCTION"
                 else "mock_key",
+            },
+            "web3_arc_testnet": {
+                "status": "ready" if self.web3_ready else "unavailable",
+                "rpc": ARC_TESTNET_RPC_URL,
+                "contract": TRACK_CARBON_CONTRACT_ADDRESS or None,
+                "deployer": _deployer_account.address if _deployer_account else None,
+                "error": self.web3_error or None,
             },
         }
 
@@ -186,10 +259,49 @@ async def lifespan(app: FastAPI):
             _state.ee_error = str(exc)
             logger.error("[GEE] ✗ Earth Engine initialization failed — %s", exc)
 
-    # ── Startup summary ───────────────────────────────────────────────────────
-    if _state.ready():
+    # ── 3. Web3 / Arc Testnet connectivity ───────────────────────────────────
+    try:
+        if not _RAW_PRIVATE_KEY:
+            raise ValueError(
+                "No private key found. Set PRIVATE_KEY_METAMASK environment secret."
+            )
+        if not TRACK_CARBON_CONTRACT_ADDRESS:
+            raise ValueError(
+                "TRACK_CARBON_CONTRACT_ADDRESS environment variable is not set."
+            )
+        if not w3.is_connected():
+            raise ConnectionError(
+                f"Cannot reach Arc Testnet RPC at {ARC_TESTNET_RPC_URL}"
+            )
+        chain_id = w3.eth.chain_id
+        balance_wei = w3.eth.get_balance(_deployer_account.address)
+        balance_arc = w3.from_wei(balance_wei, "ether")
+        _state.web3_ready = True
         logger.info(
-            "[STARTUP] ✓ All subsystems READY — dMRV pipeline fully operational."
+            "[WEB3] ✓ Arc Testnet connected — chain_id=%d | deployer=%s | "
+            "balance=%.4f ARC | contract=%s",
+            chain_id,
+            _deployer_account.address,
+            balance_arc,
+            TRACK_CARBON_CONTRACT_ADDRESS,
+        )
+    except Exception as exc:
+        _state.web3_error = str(exc)
+        logger.warning(
+            "[WEB3] ⚠ Web3 subsystem unavailable — %s. "
+            "On-chain minting will be skipped; dMRV pipeline still runs.",
+            exc,
+        )
+
+    # ── Startup summary ───────────────────────────────────────────────────────
+    if _state.ready() and _state.web3_ready:
+        logger.info(
+            "[STARTUP] ✓ All subsystems READY — dMRV pipeline + on-chain minting fully operational."
+        )
+    elif _state.ready():
+        logger.warning(
+            "[STARTUP] ⚠ dMRV pipeline READY but Web3/Arc Testnet UNAVAILABLE. "
+            "Audits will run; on-chain minting will be skipped."
         )
     else:
         logger.warning(
@@ -700,6 +812,127 @@ async def step4_yolo_carbon_accounting(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# STEP 5 — ON-CHAIN MINTING (Arc Testnet)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+async def step5_blockchain_mint(
+    wallet_address: str,
+    net_credits: float,
+    tree_count: int,
+    gross_tons: float,
+    latitude: float,
+    longitude: float,
+    audit_id: str,
+) -> Dict[str, Any]:
+    """
+    STEP 5 — Arc Testnet On-Chain ERC-20 Carbon Credit Minting
+    ────────────────────────────────────────────────────────────
+    Calls mintCarbonCredits() on the deployed TrackCarbon smart contract.
+
+    Token amounts are scaled to 18 decimal places (standard ERC-20 wei units):
+      tokenAmountDecimal = int(net_credits   × 10¹⁸)
+      co2Tons            = int(gross_tons    × 10¹⁸)
+
+    Returns a dict with tx_hash, on_chain_status, token_id, and block_number.
+    On failure, returns degraded metadata so the audit response still completes.
+    """
+    logger.info(
+        "[STEP-5] Initiating on-chain mint — beneficiary=%s | credits=%.6f | trees=%d",
+        wallet_address, net_credits, tree_count,
+    )
+
+    if not _state.web3_ready or _carbon_contract is None or _deployer_account is None:
+        logger.warning(
+            "[STEP-5] Web3 subsystem unavailable — skipping on-chain mint for audit %s.",
+            audit_id,
+        )
+        return {
+            "tx_hash":         None,
+            "on_chain_status": "SKIPPED_WEB3_UNAVAILABLE",
+            "token_id":        None,
+            "block_number":    None,
+        }
+
+    def _send_mint_tx() -> Dict[str, Any]:
+        """Blocking web3 call — executed in thread executor."""
+        token_amount_wei = int(net_credits * 10 ** 18)
+        co2_tons_wei     = int(gross_tons  * 10 ** 18)
+        geo_string       = f"{latitude:.6f},{longitude:.6f}"
+        beneficiary      = Web3.to_checksum_address(wallet_address)
+
+        nonce = w3.eth.get_transaction_count(
+            _deployer_account.address, block_identifier="pending"
+        )
+        gas_price = w3.eth.gas_price
+
+        # Estimate gas with 20% headroom
+        try:
+            estimated_gas = _carbon_contract.functions.mintCarbonCredits(
+                beneficiary, token_amount_wei, tree_count, co2_tons_wei, geo_string
+            ).estimate_gas({"from": _deployer_account.address})
+            gas_limit = int(estimated_gas * 1.2)
+        except Exception:
+            gas_limit = 300_000   # safe fallback
+
+        tx = _carbon_contract.functions.mintCarbonCredits(
+            beneficiary,
+            token_amount_wei,
+            tree_count,
+            co2_tons_wei,
+            geo_string,
+        ).build_transaction(
+            {
+                "from":     _deployer_account.address,
+                "nonce":    nonce,
+                "gas":      gas_limit,
+                "gasPrice": gas_price,
+                "chainId":  w3.eth.chain_id,
+            }
+        )
+
+        signed   = w3.eth.account.sign_transaction(tx, _deployer_account.key)
+        tx_hash  = w3.eth.send_raw_transaction(signed.raw_transaction)
+        logger.info("[STEP-5] Tx broadcast — hash=%s", tx_hash.hex())
+
+        receipt  = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
+        status   = "CONFIRMED" if receipt.status == 1 else "REVERTED"
+
+        # Attempt to decode the returned token ID from the receipt logs
+        token_id: Optional[int] = None
+        try:
+            result = _carbon_contract.functions.mintCarbonCredits(
+                beneficiary, token_amount_wei, tree_count, co2_tons_wei, geo_string
+            ).call({"from": _deployer_account.address})
+            token_id = int(result)
+        except Exception:
+            pass  # token_id stays None; tx hash is the authoritative proof
+
+        logger.info(
+            "[STEP-5] ✓ Mint %s — tx=%s | block=%d | token_id=%s",
+            status, tx_hash.hex(), receipt.blockNumber, token_id,
+        )
+        return {
+            "tx_hash":         tx_hash.hex(),
+            "on_chain_status": status,
+            "token_id":        token_id,
+            "block_number":    receipt.blockNumber,
+        }
+
+    loop = asyncio.get_event_loop()
+    try:
+        return await loop.run_in_executor(None, _send_mint_tx)
+    except Exception as exc:
+        logger.error("[STEP-5] ✗ On-chain mint failed — %s", exc)
+        return {
+            "tx_hash":         None,
+            "on_chain_status": f"MINT_FAILED: {exc}",
+            "token_id":        None,
+            "block_number":    None,
+        }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # PRIMARY dMRV AUDIT ENDPOINT
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -872,20 +1105,15 @@ async def verify_audit(
     # Determine final audit disposition
     if ndvi_approved:
         final_status = "APPROVED"
-        action_pending = "MINT_ERC20"
-        abi_ready = True
         http_status_code = 200
         logger.info(
             "[AUDIT %s] ✓ ALL 4 STEPS CLEARED — NDVI positive. "
-            "Composing Polygon Amoy mint payload.",
+            "Proceeding to on-chain mint on Arc Testnet.",
             audit_id,
         )
     else:
-        # Vegetation decline detected: halt minting, flag for human review
         final_status = "FLAGGED_FOR_REVIEW"
-        action_pending = "MANUAL_REVIEW_REQUIRED"
-        abi_ready = False
-        http_status_code = 200  # still 200 — the audit ran; outcome is in the body
+        http_status_code = 200  # audit ran; outcome is in the body
         logger.warning(
             "[AUDIT %s] ⚠ NDVI decline flagged — status=FLAGGED_FOR_REVIEW. "
             "Carbon credits withheld pending manual verification.",
@@ -893,40 +1121,71 @@ async def verify_audit(
         )
 
     # ────────────────────────────────────────────────────────────────────────
+    # STEP 5 — On-chain ERC-20 Minting (Arc Testnet)
+    # Only executes when NDVI gate is APPROVED; skipped on FLAGGED_FOR_REVIEW.
+    # ────────────────────────────────────────────────────────────────────────
+    logger.info("[AUDIT %s] ── STEP 5: Arc Testnet On-Chain Mint ──", audit_id)
+    if ndvi_approved:
+        mint_result = await step5_blockchain_mint(
+            wallet_address=wallet_clean,
+            net_credits=net_credits,
+            tree_count=tree_count,
+            gross_tons=gross_tons,
+            latitude=latitude,
+            longitude=longitude,
+            audit_id=audit_id,
+        )
+        on_chain_status  = mint_result["on_chain_status"]
+        tx_hash          = mint_result["tx_hash"]
+        token_id         = mint_result["token_id"]
+        block_number     = mint_result["block_number"]
+        # Downgrade overall status if the mint itself reverted on-chain
+        if on_chain_status == "REVERTED":
+            final_status = "MINT_REVERTED"
+            logger.error(
+                "[AUDIT %s] ✗ On-chain tx reverted — tx_hash=%s", audit_id, tx_hash
+            )
+    else:
+        on_chain_status = "SKIPPED_NDVI_DECLINE"
+        tx_hash         = None
+        token_id        = None
+        block_number    = None
+
+    # ────────────────────────────────────────────────────────────────────────
     # IMMUTABLE WEB3 RESPONSE PAYLOAD
     # ────────────────────────────────────────────────────────────────────────
     payload: Dict[str, Any] = {
-        "status": final_status,
-        "audit_id": audit_id,
-        "wallet_targeted": wallet_clean,
-        "trees_detected": tree_count,
-        "gross_annual_co2_tons": gross_tons,
+        "status":                      final_status,
+        "audit_id":                    audit_id,
+        "wallet_targeted":             wallet_clean,
+        "trees_detected":              tree_count,
+        "gross_annual_co2_tons":       gross_tons,
         "net_carbon_credits_mintable": net_credits if ndvi_approved else 0.0,
-        "buffer_pool_retained": buffer_deduction,
+        "buffer_pool_retained":        buffer_deduction,
         "dMRV_telemetry": {
-            "exif_match": exif_verified,
-            "weather_condition": weather_desc,
+            "exif_match":                 exif_verified,
+            "weather_condition":          weather_desc,
             "weather_temperature_kelvin": weather_ctx.get("temperature_kelvin"),
-            "weather_observation_utc": weather_ctx.get("timestamp_utc"),
-            "satellite_ndvi_historical": round(ndvi_hist, 4),
-            "satellite_ndvi_current": round(ndvi_curr, 4),
-            "satellite_ndvi_delta": ndvi_flag,
+            "weather_observation_utc":    weather_ctx.get("timestamp_utc"),
+            "satellite_ndvi_historical":  round(ndvi_hist, 4),
+            "satellite_ndvi_current":     round(ndvi_curr, 4),
+            "satellite_ndvi_delta":       ndvi_flag,
         },
         "blockchain_queue": {
-            "network": "Polygon Amoy",
-            "action_pending": action_pending,
-            "contract_abi_ready": abi_ready,
+            "network":          "Arc Testnet",
+            "contract_address": TRACK_CARBON_CONTRACT_ADDRESS or None,
+            "on_chain_status":  on_chain_status,
+            "tx_hash":          tx_hash,
+            "token_id":         token_id,
+            "block_number":     block_number,
         },
     }
 
     logger.info(
-        "[AUDIT %s] ══ AUDIT COMPLETE ══ status=%s | "
-        "trees=%d | gross=%.4f tCO2 | net=%.4f credits",
-        audit_id,
-        final_status,
-        tree_count,
-        gross_tons,
-        net_credits,
+        "[AUDIT %s] ══ AUDIT COMPLETE ══ status=%s | trees=%d | "
+        "gross=%.4f tCO2 | net=%.4f credits | tx=%s",
+        audit_id, final_status, tree_count, gross_tons, net_credits,
+        tx_hash or "N/A",
     )
 
     return JSONResponse(content=payload, status_code=http_status_code)
