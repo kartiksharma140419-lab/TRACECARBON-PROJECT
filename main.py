@@ -216,10 +216,43 @@ async def lifespan(app: FastAPI):
     logger.info("════════════════════════════════════════")
 
     # ── 1. YOLOv8 tree crown detection model ─────────────────────────────────
+    # Auto-download best.pt from HuggingFace if missing
+    if not os.path.isfile(YOLO_MODEL_PATH):
+        hf_token   = os.environ.get("HF_TOKEN", "")
+        hf_repo    = os.environ.get("HF_REPO_ID", "kartik2412/TRACECARBON")
+        hf_file    = os.environ.get("HF_FILENAME", "best (1).pt")
+        if hf_token and hf_repo:
+            logger.info(
+                "[YOLO] 'best.pt' not found locally — attempting download from "
+                "HuggingFace repo '%s' (file: '%s') …", hf_repo, hf_file
+            )
+            try:
+                from huggingface_hub import hf_hub_download
+                downloaded = hf_hub_download(
+                    repo_id=hf_repo,
+                    filename=hf_file,
+                    token=hf_token,
+                    local_dir=".",
+                    local_dir_use_symlinks=False,
+                )
+                # hf_hub_download saves with the original filename; rename to best.pt
+                if downloaded and os.path.isfile(downloaded) and downloaded != YOLO_MODEL_PATH:
+                    import shutil
+                    shutil.copy2(downloaded, YOLO_MODEL_PATH)
+                    logger.info("[YOLO] ✓ Downloaded and saved as '%s'", YOLO_MODEL_PATH)
+                elif downloaded and os.path.isfile(downloaded):
+                    logger.info("[YOLO] ✓ Downloaded as '%s'", YOLO_MODEL_PATH)
+            except Exception as dl_exc:
+                logger.error("[YOLO] ✗ HuggingFace download failed — %s", dl_exc)
+        else:
+            logger.warning(
+                "[YOLO] HF_TOKEN or HF_REPO_ID not set — cannot auto-download model."
+            )
+
     if not os.path.isfile(YOLO_MODEL_PATH):
         _state.yolo_error = (
             f"Model weights file '{YOLO_MODEL_PATH}' not found in project root. "
-            "Upload 'best.pt' and restart the server."
+            "Set HF_TOKEN + HF_REPO_ID env vars or upload 'best.pt' and restart."
         )
         logger.warning("[YOLO] ⚠ %s", _state.yolo_error)
     else:
