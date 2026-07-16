@@ -887,74 +887,84 @@ async def step5_blockchain_mint(
             "block_number":    None,
         }
 
-    def _send_mint_tx() -> Dict[str, Any]:
-        """Blocking web3 call — executed in thread executor."""
-        token_amount_wei = int(net_credits * 10 ** 18)
-        co2_tons_wei     = int(gross_tons  * 10 ** 18)
-        geo_string       = f"{latitude:.6f},{longitude:.6f}"
-        beneficiary      = Web3.to_checksum_address(wallet_address)
-
-        nonce = w3.eth.get_transaction_count(
-            _deployer_account.address, block_identifier="pending"
-        )
-        gas_price = w3.eth.gas_price
-
-        # Estimate gas with 20% headroom
+    def _broadcast_mint_tx() -> Dict[str, Any]:
+        """
+        Fire-and-Forget broadcast — executed in thread executor.
+        Builds, signs, and sends the raw transaction to Arc Testnet nodes,
+        then returns IMMEDIATELY with the tx_hash and PENDING status.
+        No receipt polling; the HTTP response thread is never held open
+        waiting for block confirmation.
+        """
         try:
-            estimated_gas = _carbon_contract.functions.mintCarbonCredits(
-                beneficiary, token_amount_wei, tree_count, co2_tons_wei, geo_string
-            ).estimate_gas({"from": _deployer_account.address})
-            gas_limit = int(estimated_gas * 1.2)
-        except Exception:
-            gas_limit = 300_000   # safe fallback
+            # ── Pack all transaction parameters ──────────────────────────────
+            token_amount_wei = int(net_credits * 10 ** 18)
+            co2_tons_wei     = int(gross_tons  * 10 ** 18)
+            geo_string       = f"{latitude:.6f},{longitude:.6f}"
+            beneficiary      = Web3.to_checksum_address(wallet_address)
 
-        tx = _carbon_contract.functions.mintCarbonCredits(
-            beneficiary,
-            token_amount_wei,
-            tree_count,
-            co2_tons_wei,
-            geo_string,
-        ).build_transaction(
-            {
-                "from":     _deployer_account.address,
-                "nonce":    nonce,
-                "gas":      gas_limit,
-                "gasPrice": gas_price,
-                "chainId":  w3.eth.chain_id,
+            nonce     = w3.eth.get_transaction_count(
+                _deployer_account.address, block_identifier="pending"
+            )
+            gas_price = w3.eth.gas_price
+
+            # Estimate gas with 20 % headroom; fallback to 300k on revert
+            try:
+                estimated_gas = _carbon_contract.functions.mintCarbonCredits(
+                    beneficiary, token_amount_wei, tree_count, co2_tons_wei, geo_string
+                ).estimate_gas({"from": _deployer_account.address})
+                gas_limit = int(estimated_gas * 1.2)
+            except Exception:
+                gas_limit = 300_000
+
+            # ── Build & sign ──────────────────────────────────────────────────
+            tx = _carbon_contract.functions.mintCarbonCredits(
+                beneficiary,
+                token_amount_wei,
+                tree_count,
+                co2_tons_wei,
+                geo_string,
+            ).build_transaction(
+                {
+                    "from":     _deployer_account.address,
+                    "nonce":    nonce,
+                    "gas":      gas_limit,
+                    "gasPrice": gas_price,
+                    "chainId":  w3.eth.chain_id,
+                }
+            )
+            signed = w3.eth.account.sign_transaction(tx, _deployer_account.key)
+
+            # ── Broadcast — FIRE AND FORGET ───────────────────────────────────
+            # send_raw_transaction() submits to mempool and returns immediately.
+            # We do NOT call wait_for_transaction_receipt() — the HTTP response
+            # thread must not be held open waiting for block mining on testnet.
+            tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
+            logger.info(
+                "[STEP-5] ✓ Tx broadcast to Arc Testnet mempool — hash=%s | "
+                "beneficiary=%s | credits=%.6f | trees=%d | status=PENDING",
+                tx_hash.hex(), beneficiary, net_credits, tree_count,
+            )
+
+            return {
+                "tx_hash":         tx_hash.hex(),
+                "on_chain_status": "PENDING",
+                "token_id":        None,
+                "block_number":    None,
             }
-        )
 
-        signed   = w3.eth.account.sign_transaction(tx, _deployer_account.key)
-        tx_hash  = w3.eth.send_raw_transaction(signed.raw_transaction)
-        logger.info("[STEP-5] Tx broadcast — hash=%s", tx_hash.hex())
-
-        receipt  = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
-        status   = "CONFIRMED" if receipt.status == 1 else "REVERTED"
-
-        # Attempt to decode the returned token ID from the receipt logs
-        token_id: Optional[int] = None
-        try:
-            result = _carbon_contract.functions.mintCarbonCredits(
-                beneficiary, token_amount_wei, tree_count, co2_tons_wei, geo_string
-            ).call({"from": _deployer_account.address})
-            token_id = int(result)
-        except Exception:
-            pass  # token_id stays None; tx hash is the authoritative proof
-
-        logger.info(
-            "[STEP-5] ✓ Mint %s — tx=%s | block=%d | token_id=%s",
-            status, tx_hash.hex(), receipt.blockNumber, token_id,
-        )
-        return {
-            "tx_hash":         tx_hash.hex(),
-            "on_chain_status": status,
-            "token_id":        token_id,
-            "block_number":    receipt.blockNumber,
-        }
+        except Exception as exc:
+            # Surface the exact internal error so data-formatting drops are visible
+            logger.error(
+                "[STEP-5] ✗ Tx build/broadcast failed — %s | "
+                "wallet=%s credits=%.6f trees=%d gross_tons=%.6f geo=%s,%s",
+                exc, wallet_address, net_credits, tree_count,
+                gross_tons, latitude, longitude,
+            )
+            raise  # re-raise so the outer executor catch propagates it
 
     loop = asyncio.get_event_loop()
     try:
-        return await loop.run_in_executor(None, _send_mint_tx)
+        return await loop.run_in_executor(None, _broadcast_mint_tx)
     except Exception as exc:
         logger.error("[STEP-5] ✗ On-chain mint failed — %s", exc)
         return {
@@ -1168,24 +1178,18 @@ async def verify_audit(
             longitude=longitude,
             audit_id=audit_id,
         )
-        on_chain_status  = mint_result["on_chain_status"]
-        tx_hash          = mint_result["tx_hash"]
-        token_id         = mint_result["token_id"]
-        block_number     = mint_result["block_number"]
-        # Downgrade overall status if the mint itself reverted on-chain
-        if on_chain_status == "REVERTED":
-            final_status = "MINT_REVERTED"
-            logger.error(
-                "[AUDIT %s] ✗ On-chain tx reverted — tx_hash=%s", audit_id, tx_hash
-            )
+        on_chain_status = mint_result["on_chain_status"]   # "PENDING" or "MINT_FAILED:…"
+        tx_hash         = mint_result["tx_hash"]
+        # Fire-and-forget: no receipt means no REVERTED signal possible.
+        # tx_hash in mempool is the authoritative broadcast proof.
     else:
         on_chain_status = "SKIPPED_NDVI_DECLINE"
         tx_hash         = None
-        token_id        = None
-        block_number    = None
 
     # ────────────────────────────────────────────────────────────────────────
-    # IMMUTABLE WEB3 RESPONSE PAYLOAD
+    # BLAZING-FAST HTTP 200 RESPONSE — returned immediately after broadcast.
+    # Receipt polling has been eliminated; the thread is never held open.
+    # Payload shape matches the fire-and-forget blockchain_queue contract.
     # ────────────────────────────────────────────────────────────────────────
     payload: Dict[str, Any] = {
         "status":                      final_status,
@@ -1206,11 +1210,9 @@ async def verify_audit(
         },
         "blockchain_queue": {
             "network":          "Arc Testnet",
-            "contract_address": TRACK_CARBON_CONTRACT_ADDRESS or None,
             "on_chain_status":  on_chain_status,
             "tx_hash":          tx_hash,
-            "token_id":         token_id,
-            "block_number":     block_number,
+            "contract_address": os.environ.get("TRACK_CARBON_CONTRACT_ADDRESS"),
         },
     }
 
