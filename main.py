@@ -257,6 +257,7 @@ async def lifespan(app: FastAPI):
         logger.warning("[YOLO] ⚠ %s", _state.yolo_error)
     else:
         try:
+            logger.info("[YOLO] Loading custom tree crown detection model weights from '%s' …", YOLO_MODEL_PATH)
             from ultralytics import YOLO
 
             _state.yolo_model = YOLO(YOLO_MODEL_PATH)
@@ -265,8 +266,17 @@ async def lifespan(app: FastAPI):
                 "[YOLO] ✓ Custom tree crown model loaded from '%s'", YOLO_MODEL_PATH
             )
         except Exception as exc:
-            _state.yolo_error = str(exc)
-            logger.error("[YOLO] ✗ Failed to load model — %s", exc)
+            import sys
+            import traceback
+            _state.yolo_error = f"{type(exc).__name__}: {str(exc)}"
+            logger.error(
+                "[YOLO] ✗ Failed to load custom AI model on startup. "
+                "This could be due to missing system library requirements (e.g. libGL, libglib), "
+                "resource constraints, or corrupted weight files. "
+                "System Info: Python=%s, ModelPath=%s, ModelExists=%s. Exception Detail: %s\n%s",
+                sys.version, YOLO_MODEL_PATH, os.path.exists(YOLO_MODEL_PATH), exc,
+                traceback.format_exc()
+            )
 
     # ── 2. Google Earth Engine ───────────────────────────────────────────────
     if not os.path.isfile(EE_KEY_PATH):
@@ -367,15 +377,28 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS — wildcard origin + no credentials (safe for public API / design platforms).
-# If you later need credentialed cross-origin flows, replace "*" with an explicit
-# list of trusted origins and re-enable allow_credentials=True.
+# Strip away generic development wildcards once verified, establishing that incoming
+# multi-part imagery payloads, separate coordinates, and Web3 transaction values clear.
+_CORS_ALLOWED_ORIGINS = [
+    origin.strip()
+    for origin in os.environ.get("CORS_ALLOWED_ORIGINS", "").split(",")
+    if origin.strip()
+]
+
+if not _CORS_ALLOWED_ORIGINS:
+    _CORS_ALLOWED_ORIGINS = [
+        "https://tracecarbon-380663134973.europe-west1.run.app",
+        "http://localhost:5173",
+        "http://localhost:3000",
+    ]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=False,  # must be False when allow_origins=["*"]
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=_CORS_ALLOWED_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Content-Type", "Authorization", "Accept"],
+    expose_headers=["Content-Length"],
 )
 
 
@@ -1285,10 +1308,11 @@ async def global_exception_handler(request: Request, exc: Exception) -> JSONResp
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8080))
-    logger.info("Starting TraceCarbon dMRV API on port %d …", port)
+    host = "0.0.0.0"
+    logger.info("Starting TraceCarbon dMRV API on %s:%d …", host, port)
     uvicorn.run(
         "main:app",
-        host="0.0.0.0",
+        host=host,
         port=port,
         log_level="info",
         reload=False,
