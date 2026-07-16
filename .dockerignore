@@ -1,0 +1,76 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# TraceCarbon dMRV Registry — .dockerignore
+# Prevents local artifacts, secrets, and caches from bloating the
+# Cloud Build execution context sent to Google Container Registry.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ── Version control ───────────────────────────────────────────────────────────
+.git/
+.gitignore
+.gitattributes
+
+# ── Python runtime caches ─────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+
+# ── Virtual environments ──────────────────────────────────────────────────────
+venv/
+.venv/
+env/
+.env/
+
+# ── Secret / environment files ────────────────────────────────────────────────
+.env
+.env.*
+*.env
+secrets/
+
+# ── Model weights (fetched at runtime from HuggingFace — NOT baked in) ────────
+best.pt
+best*.pt
+*.pt
+*.pth
+*.onnx
+
+# ── Google Earth Engine service account key (injected via Secret Manager) ─────
+earth_engine_key.json
+*_key.json
+*-key.json
+service_account*.json
+
+# ── Local test data and uploaded assets ───────────────────────────────────────
+attached_assets/
+test_images/
+*.jpg
+*.jpeg
+*.png
+*.tif
+*.tiff
+
+# ── IDE and editor configs ────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# ── Replit workspace metadata ─────────────────────────────────────────────────
+.replit
+replit.nix
+.upm/
+.config/
+.cache/
+.agents/
+.local/
+
+# ── Project scripts and docs (not needed inside container) ────────────────────
+scripts/
+*.md
+artifacts/
+
+# ── Node (not used, but guard against accidental inclusion) ───────────────────
+node_modules/
