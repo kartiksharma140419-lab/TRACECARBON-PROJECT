@@ -13,12 +13,13 @@ FROM python:3.11-slim
 # ── OS-level system dependencies ──────────────────────────────────────────────
 # build-essential : compiles C/C++ extensions required by ultralytics, numpy, etc.
 # libgomp1        : OpenMP runtime needed by PyTorch / ultralytics inference
-# libgl1-mesa-glx : headless OpenGL stub (opencv-python-headless still links it)
-# libglib2.0-0    : required by opencv at import time on Debian-based images
+# libgl1 / libglx-mesa0 : modern un-deprecated headless OpenGL stubs
+# libglib2.0-0          : required by opencv at import time on Debian-based images
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential \
         libgomp1 \
-        libgl1-mesa-glx \
+        libgl1 \
+        libglx-mesa0 \
         libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
