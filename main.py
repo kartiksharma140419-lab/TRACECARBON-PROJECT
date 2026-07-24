@@ -380,28 +380,17 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# Strip away generic development wildcards once verified, establishing that incoming
-# multi-part imagery payloads, separate coordinates, and Web3 transaction values clear.
-_CORS_ALLOWED_ORIGINS = [
-    origin.strip()
-    for origin in os.environ.get("CORS_ALLOWED_ORIGINS", "").split(",")
-    if origin.strip()
-]
-
-if not _CORS_ALLOWED_ORIGINS:
-    _CORS_ALLOWED_ORIGINS = [
-        "https://tracecarbon-380663134973.europe-west1.run.app",
-        "http://localhost:5173",
-        "http://localhost:3000",
-    ]
-
+# ── CORS — allow all cross-origin requests ───────────────────────────────────
+# NOTE: allow_origin_regex=".*" is used instead of allow_origins=["*"] because
+# Starlette rejects the combination of allow_origins=["*"] + allow_credentials=True.
+# The regex achieves identical wildcard behaviour while dynamically echoing back the
+# requesting Origin header, which satisfies browser preflight for credentialed requests.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=_CORS_ALLOWED_ORIGINS,
+    allow_origin_regex=".*",
     allow_credentials=True,
-    allow_methods=["GET", "POST", "OPTIONS"],
-    allow_headers=["Content-Type", "Authorization", "Accept"],
-    expose_headers=["Content-Length"],
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 
